@@ -1,0 +1,9 @@
+[Unit]
+Description=World's best application
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/crapp.sh
+
+[Install]
+WantedBy=multi-user.target

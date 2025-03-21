@@ -1,0 +1,9 @@
+[Unit]
+Description=Ping every minute
+
+[Timer]
+OnCalendar=*:0/1
+Unit=ping.service
+
+[Install]
+WantedBy=timers.target

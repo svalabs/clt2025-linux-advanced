@@ -1,0 +1,11 @@
+[Unit]
+Description=Mount smol ramdisk
+
+[Mount]
+What=none
+Where=/ramdisk
+Type=tmpfs
+Options=size=200M
+
+[Install]
+WantedBy=multi-user.target

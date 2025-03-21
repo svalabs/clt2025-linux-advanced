@@ -1,0 +1,360 @@
+---
+- name: Prepare lab environment
+  hosts: all
+  become: true
+  handlers:
+    - name: Restart SSH daemon
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+
+  pre_tasks:
+    - name: Load credentials
+      ansible.builtin.include_vars: credentials.yml
+      tags: always
+
+    - name: Enable EPEL repository
+      ansible.builtin.yum:
+        name: epel-release
+      when: ansible_os_family | lower == 'redhat'
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family | lower == 'debian'
+
+    - name: Configure SSH options (Hetzner)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      ignore_errors: true
+      loop:
+        - regexp: '^PasswordAuthentication'
+          line: 'PasswordAuthentication yes'
+      notify: Restart SSH daemon
+      tags:
+        - ssh
+        - hetzner
+        - never
+
+  tasks:
+    - name: Install core utilities
+      ansible.builtin.package:
+        name:
+          - dos2unix
+          - vim
+          - acl
+          - htop
+          - nano
+          - python3-passlib
+          - bash-completion
+          - bzip2
+          - file
+          - tmux
+          - lvm2
+          - cryptsetup
+          - lsof
+          - mdadm
+          - sl
+          - nmon
+          - iotop
+          - iptraf-ng
+          - bonnie++
+          - stress-ng
+
+    - name: Change root password
+      ansible.builtin.user:
+        name: root
+        password: "{{ root_password | password_hash('sha512') }}"
+
+    - name: Update /etc/hosts
+      ansible.builtin.template:
+        src: "templates/hosts.j2"
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure SSH options
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - regexp: '^PasswordAuthentication'
+          line: 'PasswordAuthentication yes'
+        - regexp: '^PermitRootLogin'
+          line: 'PermitRootLogin yes'
+      notify: Restart SSH daemon
+      tags: ssh
+
+    - name: Create user
+      ansible.builtin.user:
+        name: user
+        password: "{{ user_password | password_hash('sha512') }}"
+        update_password: on_create
+        shell: /bin/bash
+        generate_ssh_key: true
+
+    - name: Enable user to run sudo
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: 'user  ALL=(ALL)       NOPASSWD: ALL'
+
+  post_tasks:
+    - name: Create various directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /labs
+        - /var/labs
+        - /import/labs
+        - /ramdisk
+      tags:
+        - labs
+
+    - name: Copy solution files
+      ansible.posix.synchronize:
+        src: ../labs/
+        dest: /labs/
+      tags:
+        - labs
+
+    - name: Copy various lab files
+      ansible.builtin.copy:
+        src: "files/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - src: train.sh
+          dest: /opt/train.sh
+        - src: crapp.sh
+          dest: /usr/local/bin/crapp.sh
+
+    - name: Install commander
+      ansible.builtin.get_url:
+        url: 'https://github.com/commander-cli/commander/releases/download/v2.5.0/commander-linux-amd64'
+        dest: /usr/bin/commander
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - labs
+
+    - name: Install lab utility
+      ansible.builtin.copy:
+        src: files/lab
+        dest: /usr/bin/lab
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - labs
+
+
+- name: Prepare node1
+  hosts:
+    - node1
+    - linux-advanced-node1
+  become: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+  tasks:
+    - name: Installation additional packages
+      ansible.builtin.dnf:
+        name:
+          - procps-ng
+          - iproute
+
+    - name: Install SELinux utilities
+      ansible.builtin.dnf:
+        name:
+          - python3-policycoreutils
+          - policycoreutils-devel
+          - selinux-policy-doc
+
+    - name: Enable SELinux
+      ansible.posix.selinux:
+        policy: targeted
+        state: enforcing
+
+    - name: Set SELinux booleans
+      ansible.posix.seboolean:
+        name: "{{ item.name }}"
+        state: "{{ item.state | default(true) }}"
+        persistent: true
+      loop:
+        - name: samba_export_all_ro
+
+    - name: Install additional utilities
+      ansible.builtin.dnf:
+        name:
+          - podman
+          - podman-compose
+          - cockpit
+          - cockpit-podman
+          - nfs-utils
+          - firewalld
+      tags: firewall
+
+    - name: Configure services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - firewalld.service
+        - cockpit.service
+        - cockpit.socket
+        - nfs-server.service
+      tags: firewall
+
+    - name: Install core utilities (Red Hat)
+      ansible.builtin.yum:
+        name:
+          - policycoreutils
+          - policycoreutils-python-utils
+          - setroubleshoot-server
+
+    - name: Enable firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+      tags: firewall
+
+    - name: Configure firewalld
+      ansible.posix.firewalld:
+        zone: public
+        port: "{{ item.port | default(omit) }}"
+        service: "{{ item.service | default(omit) }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - service: ssh
+        - service: http
+        - service: samba
+        - service: cockpit
+        - port: 8080/tcp
+      tags: firewall
+
+    - name: Install systemd units
+      ansible.builtin.copy:
+        src: "files/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - slow-app.service
+        - crapp.service
+      notify: Reload systemd
+
+    - name: Reload systemd now (if required)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable slow-app
+      ansible.builtin.service:
+        name: slow-app.service
+        enabled: true
+        state: started
+
+
+- name: Prepare node2
+  hosts:
+    - node2
+    - linux-advanced-node2
+  become: true
+  roles:
+    - role: geerlingguy.docker
+      docker_install_compose: false
+      docker_users:
+        - user
+  tasks:
+    - name: Installation additional packages
+      ansible.builtin.apt:
+        name:
+          - procps
+          - iproute2
+          - ufw
+
+    - name: Install docker-compose
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
+        dest: /usr/bin/docker-compose
+        owner: root
+        group: root
+        mode: '0755'
+      tags: docker
+
+    - name: Configure ufw
+      community.general.ufw:
+        state: enabled
+        rule: "{{ item.rule | default('allow') }}"
+        port: "{{ item.port | default(omit) }}"
+      loop:
+        - port: '22'
+        - port: '80'
+        - port: '8080'
+        - port: '139'
+        - port: '445'
+
+
+- name: Prepare Guacamole host
+  hosts: guacamole
+  become: true
+  pre_tasks:
+    - name: Install requirements
+      ansible.builtin.apt:
+        name:
+          - jq
+
+  roles:
+    - role: geerlingguy.docker
+      docker_install_compose: false
+    - role: devsec.hardening.os_hardening
+      sysctl_overwrite:
+        net.ipv4.ip_forward: 1
+
+  post_tasks:
+    - name: Install docker-compose
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
+        dest: /usr/bin/docker-compose
+        owner: root
+        group: root
+        mode: '0755'
+      tags: docker
+
+    - name: Deploy Guacamole docker-compose configuration
+      ansible.posix.synchronize:
+        rsync_opts: '--ignore-existing -t'
+        src: files/guacamole
+        dest: /root
+      tags: docker
+
+    - name: Prepare Guacamole
+      ansible.builtin.command: /root/guacamole/prepare.sh
+      args:
+        chdir: /root/guacamole
+        creates: /root/guacamole/nginx/ssl/self-ssl.key
+      tags: docker
+
+    - name: Start Guacamole
+      ansible.builtin.command: docker-compose up -d
+      changed_when: false
+      args:
+        chdir: /root/guacamole
+      tags: docker

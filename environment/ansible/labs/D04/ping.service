@@ -1,0 +1,5 @@
+[Unit] 
+Description="Write ping to log"
+
+[Service]
+ExecStart=/usr/local/bin/ping.sh

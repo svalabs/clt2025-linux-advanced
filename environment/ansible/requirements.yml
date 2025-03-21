@@ -1,0 +1,10 @@
+---
+roles:
+  - name: geerlingguy.docker
+    version: 7.4.4
+
+collections:
+  - name: community.docker
+    version: 4.3.0
+  - name: devsec.hardening
+    version: 10.2.0

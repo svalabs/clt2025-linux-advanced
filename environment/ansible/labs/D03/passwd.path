@@ -1,0 +1,9 @@
+[Unit]
+Description="Monitor /etc/passwd for changes"
+
+[Path]
+PathModified=/etc/passwd
+Unit=passwd-log.service
+
+[Install]
+WantedBy=multi-user.target

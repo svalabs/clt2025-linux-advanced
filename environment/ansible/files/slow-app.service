@@ -1,0 +1,11 @@
+[Unit]
+Description=The infamous slow(TM) application
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=sleep 22
+
+[Install]
+WantedBy=multi-user.target
